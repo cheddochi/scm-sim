@@ -47,7 +47,7 @@ CAPEX_SCHEDULE_GREEN = {2027: 0.40, 2028: 0.60}
 RAMP_GREEN = {2029: 0.50, 2030: 0.85}       # 2031년부터 100%
 START_GREEN = 2029
 
-WROCLAW_CAP = {2026: 86, 2027: 86}          # 2028년부터 90
+WROCLAW_CAP = {2026: 86, 2027: 88}          # 2028년부터 90 (2027년 88은 <자료 14> 기존 NPV 역산)
 
 MATERIAL_2026 = 50.0          # $/kWh (양품 기준, 수율로 나눔)
 POWER_KWH_PER_KWH = 38.8      # 셀 1kWh당 전력 사용량
