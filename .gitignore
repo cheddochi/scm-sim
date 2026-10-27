@@ -1,0 +1,8 @@
+# 케이스 원자료(강의 배포 자료)는 공개 저장소에 올리지 않는다
+data/*.pdf
+data/*.xlsx
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+.venv/
