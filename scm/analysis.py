@@ -214,7 +214,7 @@ def disruption_mc(d: dict, sc: C.Scenario, factories: list[str], plan: dict | No
         dem = D.demand(d, sc)
         targets = [target] if target else list(factories)
         base = {t: N.allocate_year(d, sc, t, factories, dem[t], plan) for t in C.YEARS}
-        base_sum = {t: pd.DataFrame(N.summarize_year(d, t, base[t], factories, plan)).set_index("factory")
+        base_sum = {t: pd.DataFrame(N.summarize_year(d, t, base[t], factories, plan, sc)).set_index("factory")
                     for t in C.YEARS}
         memo_year: dict = {}
         losses, buffers = [], []
@@ -235,9 +235,9 @@ def disruption_mc(d: dict, sc: C.Scenario, factories: list[str], plan: dict | No
                 key = (t, tuple(sorted(cm.items())))
                 if key not in memo_year:
                     r = N.allocate_year(d, sc, t, factories, dem[t], plan, cm)
-                    memo_year[key] = pd.DataFrame(N.summarize_year(d, t, r, factories, plan)).set_index("factory")
+                    memo_year[key] = pd.DataFrame(N.summarize_year(d, t, r, factories, plan, sc)).set_index("factory")
                 s, b = memo_year[key], base_sum[t]
-                total += float((b["ebitda"].sum() - s["ebitda"].sum()) * F.discount(t))
+                total += float((b["ebitda"].sum() - s["ebitda"].sum()) * F.discount(t, sc.wacc))
                 lost_eu += float(sum(b.loc[f, "eu_volume"] - s.loc[f, "eu_volume"] for f in cm))
                 if C.OCHANG not in cm:
                     och_gain += float(s.loc[C.OCHANG, "eu_volume"] - b.loc[C.OCHANG, "eu_volume"])
@@ -267,11 +267,11 @@ def carbon_table(d: dict) -> pd.DataFrame:
     return out
 
 
-def capital_cost_per_kwh(d: dict, f: str, years: int = 17) -> float:
+def capital_cost_per_kwh(d: dict, f: str, years: int = 17, wacc: float = C.WACC) -> float:
     """신규 공장 연간 자본비용($/kWh): 순 CAPEX × 자본회수계수(WACC 9%, 가동 17년) ÷ 생산능력."""
     if f in C.EXISTING:
         return 0.0
     net = d["factories"].loc[f, "capex_usd_million"] * (1 - C.SUBSIDY[f])
-    r = C.WACC
+    r = wacc
     crf = r / (1 - (1 + r) ** -years)
     return net * crf / d["factories"].loc[f, "target_capacity_gwh_yr"]

@@ -46,16 +46,19 @@ def _two_phase(t: int, r1: float, r2: float, switch: int) -> float:
     return (1 + r1) ** n1 * (1 + r2) ** n2
 
 
-def material(t: int) -> float:
-    return C.MATERIAL_2026 * _two_phase(t, -0.015, -0.005, 2030)
+def material(t: int, sc: C.Scenario | None = None) -> float:
+    sc = sc or C.SCENARIOS["base"]
+    return sc.material_2026 * _two_phase(t, sc.material_rate_1, sc.material_rate_2, 2030)
 
 
 def price_index(t: int, sc: C.Scenario | None = None) -> float:
-    return _two_phase(t, -0.015, -0.005, 2030) * (sc.price_mult if sc is not None else 1.0)
+    sc = sc or C.SCENARIOS["base"]
+    return _two_phase(t, sc.price_rate_1, sc.price_rate_2, 2030) * sc.price_mult
 
 
-def conversion_index(t: int) -> float:
-    return _two_phase(t, -0.01, 0.0, 2035)
+def conversion_index(t: int, sc: C.Scenario | None = None) -> float:
+    sc = sc or C.SCENARIOS["base"]
+    return _two_phase(t, sc.conv_learning, 0.0, 2035)
 
 
 def eua_eur(d: dict, t: int, sc: C.Scenario) -> float:
@@ -94,9 +97,10 @@ def capacity(d: dict, f: str, t: int, stages=FULL_NOW) -> float:
     return fac["target_capacity_gwh_yr"] * capacity_share(f, t, stages)
 
 
-def fixed_opex(d: dict, f: str, t: int, stages=FULL_NOW) -> float:
+def fixed_opex(d: dict, f: str, t: int, stages=FULL_NOW, sc: C.Scenario | None = None) -> float:
     """고정운영비($M). 신규 공장은 단계별로 램프업 중 가동 상한 비례(최소 60%), 가동 전 0."""
-    base = d["factories"].loc[f, "fixed_opex_usd_million_per_year"] * (1 + C.FIXED_OPEX_GROWTH) ** (t - C.BASE_YEAR)
+    g = (sc or C.SCENARIOS["base"]).fixed_opex_growth
+    base = d["factories"].loc[f, "fixed_opex_usd_million_per_year"] * (1 + g) ** (t - C.BASE_YEAR)
     if f in C.EXISTING:
         return base
     out = 0.0

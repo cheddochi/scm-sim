@@ -86,13 +86,14 @@ def allocate_year(d: dict, sc: C.Scenario, t: int, factories: list[str], dem_t: 
     return {"lanes": lt, "shadow": pd.Series(pi, index=factories), "capacity": pd.Series(caps, index=factories)}
 
 
-def summarize_year(d: dict, t: int, r: dict, factories: list[str], plan: dict | None = None) -> list[dict]:
+def summarize_year(d: dict, t: int, r: dict, factories: list[str], plan: dict | None = None,
+                   sc: C.Scenario | None = None) -> list[dict]:
     lt = r["lanes"]
     g = lt.assign(rev=lt["flow"] * lt["price"], contrib=lt["flow"] * lt["margin"],
                   eu=lt["flow"] * lt["is_eu"]).groupby(level=0)[["flow", "rev", "contrib", "eu"]].sum()
     rows = []
     for f in factories:
-        fo = D.fixed_opex(d, f, t, _stages(plan, f))
+        fo = D.fixed_opex(d, f, t, _stages(plan, f), sc)
         rows.append({"year": t, "factory": f, "volume": g.loc[f, "flow"], "eu_volume": g.loc[f, "eu"],
                      "capacity": r["capacity"][f], "revenue": g.loc[f, "rev"], "contribution": g.loc[f, "contrib"],
                      "fixed_opex": fo, "ebitda": g.loc[f, "contrib"] - fo})
@@ -107,7 +108,7 @@ def run_network(d: dict, sc: C.Scenario, factories: list[str], plan: dict | None
         r = allocate_year(d, sc, t, factories, dem[t], plan)
         lanes[t] = r["lanes"]
         shadow[t] = r["shadow"]
-        rows += summarize_year(d, t, r, factories, plan)
+        rows += summarize_year(d, t, r, factories, plan, sc)
     pl = pd.DataFrame(rows)
     return {"pl": pl, "shadow": pd.DataFrame(shadow), "lanes": lanes, "demand": dem, "solver": SOLVER["name"],
             "scenario": sc, "factories": list(factories), "plan": plan or {}}

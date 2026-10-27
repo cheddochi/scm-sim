@@ -84,6 +84,18 @@ class Scenario:
     self_gen: tuple = ()              # ((공장, 저탄소 자가발전 비율), ...) 위치기반 인정분
     price_mult: float = 1.0           # 판매가격 수준 배율 (민감도용)
     subsidy_mult: float = 1.0         # 투자 보조금 배율 (민감도용)
+    # <자료 10> 비용·거시·세율 공통 가정 (기본값 = 케이스)
+    material_2026: float = MATERIAL_2026        # 소재비 $/kWh (양품 기준)
+    material_rate_1: float = -0.015             # 소재비 연 변화율 ~2030
+    material_rate_2: float = -0.005             # 2031~
+    price_rate_1: float = -0.015                # 판매가격 연 변화율 ~2030
+    price_rate_2: float = -0.005                # 2031~
+    conv_learning: float = -0.01                # 가공비 학습률 (2035까지, 이후 일정)
+    wacc: float = WACC
+    fx: float = FX                              # $/€
+    inventory_rate: float = INVENTORY_RATE
+    fixed_opex_growth: float = FIXED_OPEX_GROWTH
+    tax_delta: float = 0.0                      # 전 공장 법인세율 가감 (%p/100)
 
     def with_(self, **kw):
         return replace(self, **kw)

@@ -22,18 +22,56 @@ def ko(f):
 
 # ---------------------------------------------------------------- 입력 패널 조각
 def recalc_box():
-    """직접입력일 때 무거운 계산(LP 재풀이) 실행 버튼."""
-    if st.session_state["scenario"] != "custom":
-        st.markdown('<div class="note">공식 시나리오는 앱 시작 시 계산해 둔 결과를 씁니다. '
-                    '값을 바꾸면 [6. 직접입력]으로 전환됩니다.</div>', unsafe_allow_html=True)
+    """무거운 계산(LP 재풀이) 실행 버튼: 직접입력 시나리오나 공통 가정이 바뀌었을 때."""
+    if st.session_state["scenario"] != "custom" and not S.macro_pending():
+        st.markdown('<div class="note">공식 시나리오는 계산해 둔 결과를 씁니다. 시나리오 값을 바꾸면 [6. 직접입력]으로, '
+                    '비용·거시 값을 바꾸면 5종 전체에 덧씌워 재계산합니다.</div>', unsafe_allow_html=True)
         return
     if S.needs_recalc():
-        st.markdown('<div class="errtxt">입력이 바뀌었습니다. LP 20개 연도 재풀이가 필요합니다.</div>',
-                    unsafe_allow_html=True)
+        msg = "입력이 바뀌었습니다. LP 20개 연도 재풀이가 필요합니다."
+        if S.macro_pending():
+            msg += " 비용·거시 변경은 5대 시나리오·25개 대안 전체를 다시 풀어 첫 회 약 2~3분 걸립니다."
+        st.markdown(f'<div class="errtxt">{msg}</div>', unsafe_allow_html=True)
     if st.button("재계산", type="primary", use_container_width=True, key="recalc"):
-        st.session_state["applied_custom"] = S.live_scenario()
-        st.session_state["calc_time"] = pd.Timestamp.now().strftime("%m-%d %H:%M")
+        S.apply_recalc()
         st.rerun()
+
+
+def macro_inputs():
+    """<자료 10> 비용·거시·세율. 5종 시나리오 모두에 공통으로 덧씌우는 가정이다."""
+    dv = S.MACRO_DEFAULTS
+    num("소재비 2026 ($/kWh, 양품 기준)", "mac_material", default=dv["mac_material"], min_value=30.0, max_value=70.0,
+        step=1.0, format="$%.0f")
+    c1, c2 = st.columns(2)
+    with c1:
+        num("소재비 변화 ~2030 (%/년)", "mac_mat_r1", default=dv["mac_mat_r1"], min_value=-5.0, max_value=3.0, step=0.5,
+            format="%.1f%%")
+        num("판매가 변화 ~2030 (%/년)", "mac_price_r1", default=dv["mac_price_r1"], min_value=-5.0, max_value=2.0,
+            step=0.5, format="%.1f%%")
+    with c2:
+        num("소재비 변화 2031~ (%/년)", "mac_mat_r2", default=dv["mac_mat_r2"], min_value=-5.0, max_value=3.0, step=0.5,
+            format="%.1f%%")
+        num("판매가 변화 2031~ (%/년)", "mac_price_r2", default=dv["mac_price_r2"], min_value=-5.0, max_value=2.0,
+            step=0.5, format="%.1f%%")
+    num("가공비 학습률 (%/년, 2035까지)", "mac_conv", default=dv["mac_conv"], min_value=-3.0, max_value=0.0, step=0.5,
+        format="%.1f%%")
+    c1, c2 = st.columns(2)
+    with c1:
+        num("WACC 할인율 (%)", "mac_wacc", default=dv["mac_wacc"], min_value=5.0, max_value=14.0, step=0.5,
+            format="%.1f%%")
+        num("재고유지비율 (%/년)", "mac_inv", default=dv["mac_inv"], min_value=4.0, max_value=24.0, step=1.0,
+            format="%.0f%%")
+    with c2:
+        num("환율 ($/€)", "mac_fx", kind="number", default=dv["mac_fx"], min_value=0.80, max_value=1.50, step=0.01,
+            format="%.2f")
+        num("고정운영비 상승률 (%/년)", "mac_fopex", default=dv["mac_fopex"], min_value=0.0, max_value=5.0, step=0.5,
+            format="%.1f%%")
+    num("법인세율 가감 (전 공장, %p)", "mac_tax", default=dv["mac_tax"], min_value=-10.0, max_value=10.0, step=1.0,
+        format="%+.0f%%p")
+    st.markdown('<div class="note">공장별 기준 세율: 한국 24 · 폴란드 19 · 헝가리 9 · 독일 30 · 프랑스·스페인 25 · '
+                '스웨덴 20.6 · 포르투갈·체코 21%. 감가상각은 순CAPEX 10년 정액(고정). '
+                '이 값들은 5대 시나리오 모두에 덧씌우며, 원가표는 즉시·LP/NPV는 [재계산] 후 반영됩니다.</div>',
+                unsafe_allow_html=True)
 
 
 def demand_inputs():
@@ -103,22 +141,16 @@ def screen_inputs():
     sc_live = S.light_scenario()
     left, right = st.columns([1, 3])
     with left:
-        with st.expander("1. 수요 파라미터", expanded=True):
+        with st.expander("1\\. 수요 파라미터", expanded=True):
             demand_inputs()
-        with st.expander("2. 비용·거시·세율 (<자료 10>)", expanded=False):
-            consts = pd.DataFrame({
-                "값": ["$50/kWh, 2030까지 −1.5%/년 → −0.5%", "2030까지 −1.5%/년 → −0.5%", "2035까지 −1%/년",
-                      "9% (2026 시점, 20년, 잔존 0)", "1.10 $/€", "12% × (리드타임+7일)/365",
-                      "공장별 9~30%", "순CAPEX 10년 정액"]},
-                index=["소재비", "판매가격", "가공비 학습", "WACC", "환율", "재고유지비", "법인세", "감가상각"])
-            U.show_table(consts, left={"값"})
-            st.markdown('<div class="note">엔진 상수(케이스 고정값). 화면 조절은 다음 단계에서 지원.</div>',
-                        unsafe_allow_html=True)
-        with st.expander("3. 탄소 규제 및 통상 정책 (<자료 14>)", expanded=True):
+        with st.expander("2\\. 비용·거시·세율 (<자료 10>, 5종 공통)", expanded=S.macro_pending() or bool(
+                S.macro_changed(S.macro_live()))):
+            macro_inputs()
+        with st.expander("3\\. 탄소 규제 및 통상 정책 (<자료 14>)", expanded=True):
             carbon_inputs()
-        with st.expander("4. 시나리오 확률 가중치 (질문 5a)", expanded=False):
+        with st.expander("4\\. 시나리오 확률 가중치 (질문 5a)", expanded=False):
             prob_inputs()
-        with st.expander("5. 몬테카를로 설정", expanded=False):
+        with st.expander("5\\. 몬테카를로 설정", expanded=False):
             mc_inputs()
         recalc_box()
     with right:
@@ -197,8 +229,26 @@ def assumption_spec(sc: C.Scenario) -> pd.DataFrame:
         ("IAA 한국산 페널티", asm, f"${sc.iaa_penalty:.1f}/kWh (2030~)", "<자료 14>", sc.iaa_penalty != 0),
         ("브로츠와프 직접 자가발전", asm, f"{dict(sc.self_gen).get(C.WROCLAW, 0) * 100:.0f}%", "사용자 입력",
          bool(sc.self_gen)),
-        ("소재비·판매가·가공비 추세", fact, "<자료 10> 기본값", "<자료 10>", False),
-        ("투자 일정·보조금·세율", fact, "그린필드 2027·28 집행, 2029 가동", "<자료 10>", False),
+        ("소재비", fact if sc.material_2026 == base.material_2026 and sc.material_rate_1 == base.material_rate_1
+         and sc.material_rate_2 == base.material_rate_2 else asm,
+         f"${sc.material_2026:.1f}/kWh, ~2030 {sc.material_rate_1 * 100:+.1f}%/년 → {sc.material_rate_2 * 100:+.1f}%/년",
+         "<자료 10>", (sc.material_2026, sc.material_rate_1, sc.material_rate_2)
+         != (base.material_2026, base.material_rate_1, base.material_rate_2)),
+        ("판매가격 추세", fact if (sc.price_rate_1, sc.price_rate_2) == (base.price_rate_1, base.price_rate_2) else asm,
+         f"~2030 {sc.price_rate_1 * 100:+.1f}%/년 → {sc.price_rate_2 * 100:+.1f}%/년 (<자료 5> 2026 가격 기준)", "<자료 10>",
+         (sc.price_rate_1, sc.price_rate_2) != (base.price_rate_1, base.price_rate_2)),
+        ("가공비 학습률", fact if sc.conv_learning == base.conv_learning else asm,
+         f"2035까지 {sc.conv_learning * 100:+.1f}%/년, 이후 일정", "<자료 10>", sc.conv_learning != base.conv_learning),
+        ("WACC 할인율", fact if sc.wacc == base.wacc else asm, f"{sc.wacc * 100:.1f}% (2026 시점, 20년, 잔존 0)",
+         "<자료 10>", sc.wacc != base.wacc),
+        ("환율", fact if sc.fx == base.fx else asm, f"1유로 = {sc.fx:.2f}달러", "<자료 10>", sc.fx != base.fx),
+        ("재고유지비", fact if sc.inventory_rate == base.inventory_rate else asm,
+         f"연 {sc.inventory_rate * 100:.0f}% × (리드타임+7일)/365", "<자료 10>", sc.inventory_rate != base.inventory_rate),
+        ("고정운영비 상승률", fact if sc.fixed_opex_growth == base.fixed_opex_growth else asm,
+         f"연 {sc.fixed_opex_growth * 100:.1f}%", "<자료 10>", sc.fixed_opex_growth != base.fixed_opex_growth),
+        ("법인세율", fact if sc.tax_delta == 0 else asm,
+         "공장 소재국 세율" + (f" {sc.tax_delta * 100:+.0f}%p" if sc.tax_delta else ""), "<자료 10>", sc.tax_delta != 0),
+        ("투자 일정·보조금", fact, "그린필드 2027·28 집행, 2029 가동", "<자료 10>", False),
         ("브로츠와프 생산능력", asm, "86 → 88(2027) → 90GWh", "<자료 14> 기존 NPV 역산", False),
         ("손실연도 법인세", asm, "0 (이월결손 없음)", "<자료 13> 역산", False),
         ("시나리오 확률", asm, " / ".join(f"{S.SCEN_SHORT[k]} {st.session_state[v]}%" for k, v in S.PROB_KEYS.items()),
@@ -353,7 +403,7 @@ def screen_network():
         cl, cr = st.columns(2)
         with cl:
             sp = shadow[2035].to_dict() if 2035 in shadow else {}
-            cc = A.capital_cost_per_kwh(d, cand)
+            cc = A.capital_cost_per_kwh(d, cand, wacc=sc.wacc)
             nm = ko(cand)
             sp_n = sp.get(nm, 0)
             title = f"{nm} 2035 잠재가격 ${sp_n:.1f} {'>' if sp_n > cc else '<'} 자본비용 ${cc:.1f}"
@@ -384,7 +434,7 @@ def screen_network():
                     for f in C.EXISTING + [cand]:
                         r = ltab.loc[f]
                         # 정상 가동 기준 kWh당 고정비 (<자료 11> 참고행: 오창 12.00, 브로츠와프 7.56)
-                        fixed = d["factories"].loc[f, "fixed_opex_usd_million_per_year"] * (1 + C.FIXED_OPEX_GROWTH) ** (y - C.BASE_YEAR)
+                        fixed = d["factories"].loc[f, "fixed_opex_usd_million_per_year"] * (1 + sc_live.fixed_opex_growth) ** (y - C.BASE_YEAR)
                         cap_f = D.capacity(d, f, y) if f in C.EXISTING else d["factories"].loc[f, "target_capacity_gwh_yr"]
                         fo = fixed / cap_f
                         rows[(y, f)] = {**{K.COST_KO[c]: r[c] for c in K.COST_ITEMS},
@@ -421,7 +471,7 @@ def screen_network():
                     '자본비용 = 순CAPEX × CRF(9%, 17년) ÷ 용량. 잠재가격은 해당 공장 생산능력 1kWh 추가 시 공헌이익 증가.</div>',
                     unsafe_allow_html=True)
         if S.prob_ok():
-            tm = S.timing(cand, tuple(S.probs().items()))
+            tm = S.timing(cand, tuple(S.probs().items()), S.macro_key())
             s = tm["summary"]
             best = s["expected_npv"].idxmax()
             title = (f"{ko(cand)}은 {best.split('(')[0]}이 최선: 기대 {B.fmt_m(s.loc[best, 'expected_npv'])}, "
@@ -466,7 +516,7 @@ def master_table(d, sc, ev) -> pd.DataFrame:
             "시장 CF": ct.loc[f, "market_total"], "위치 CF": ct.loc[f, "location_total"],
             "2030 65kg": light(ct.loc[f, "pass_2030"]), "2035 60kg": light(ct.loc[f, "pass_2035"]),
             "필요 자가발전": ct.loc[f, "selfgen_2035"], "2035 잠재가격": sp35,
-            "자본비용": A.capital_cost_per_kwh(d, f) if is_new else np.nan,
+            "자본비용": A.capital_cost_per_kwh(d, f, wacc=sc.wacc) if is_new else np.nan,
         })
     return pd.DataFrame(rows).set_index("거점")
 
@@ -493,7 +543,7 @@ def screen_board():
                         unsafe_allow_html=True)
             return
         prob = S.probs()
-        rec = S.recommendation(tuple(prob.items()), sc)
+        rec = S.recommendation(tuple(prob.items()), sc, S.macro_key())
         best, er, m = rec["best"], rec["er"], rec["matrix"]
         er_ext, ext, bk = rec["er_ext"], rec["ext"], rec["best_key"]
         ck = B.carbon_kpi(d)
@@ -565,7 +615,7 @@ def screen_board():
         U.show_table(tg, left=set(tg.columns), index_label="지표")
         bl, br = st.columns(2)
         with bl:
-            pt = B.pareto_table(d, prob)
+            pt = S.pareto(tuple(prob.items()), S.macro_key())
             title = f"{nm}: 기대 NPV 1위이면서 탄소 마진 {pt.loc[best, 'carbon_margin']:+.1f}kg 확보"
             CH.show(CH.pareto(pt, {f: ko(f) for f in pt.index}, best, title,
                               S.subtitle("$M · kg/kWh", None, extra="원 크기 = 최대 거점 의존도 낮을수록 큼",

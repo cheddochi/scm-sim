@@ -32,6 +32,41 @@ def preset_values(sc: C.Scenario) -> dict:
 
 BASE_VALUES = preset_values(C.SCENARIOS["base"])
 
+# 비용·거시·세율 공통 가정: 세션 키 → (Scenario 필드, 화면 단위 → 엔진 단위 배율). 5종 시나리오 모두에 덧씌운다.
+MACRO = {
+    "mac_material": ("material_2026", 1.0), "mac_mat_r1": ("material_rate_1", 0.01),
+    "mac_mat_r2": ("material_rate_2", 0.01), "mac_price_r1": ("price_rate_1", 0.01),
+    "mac_price_r2": ("price_rate_2", 0.01), "mac_conv": ("conv_learning", 0.01), "mac_wacc": ("wacc", 0.01),
+    "mac_fx": ("fx", 1.0), "mac_inv": ("inventory_rate", 0.01), "mac_fopex": ("fixed_opex_growth", 0.01),
+    "mac_tax": ("tax_delta", 0.01),
+}
+_BASE = C.SCENARIOS["base"]
+MACRO_DEFAULTS = {k: round(getattr(_BASE, f) / u, 6) for k, (f, u) in MACRO.items()}
+
+
+def macro_live() -> dict:
+    """입력 패널의 공통 가정 (엔진 단위)."""
+    return {f: round(st.session_state[k] * u, 9) for k, (f, u) in MACRO.items()}
+
+
+def macro_applied() -> dict:
+    """[재계산]으로 확정한 공통 가정. 확정 전에는 케이스 기본값."""
+    return st.session_state.get("applied_macro") or {f: getattr(_BASE, f) for f, _ in MACRO.values()}
+
+
+def macro_changed(macro: dict) -> dict:
+    return {f: v for f, v in macro.items() if abs(v - getattr(_BASE, f)) > 1e-12}
+
+
+def overlay(sc: C.Scenario, macro: dict) -> C.Scenario:
+    return sc.with_(**macro_changed(macro)) if macro_changed(macro) else sc
+
+
+def official() -> dict:
+    """[재계산]으로 확정한 공통 가정을 덧씌운 공식 시나리오 5종."""
+    m = macro_applied()
+    return {k: overlay(v, m) for k, v in C.SCENARIOS.items()}
+
 
 def init():
     ss = st.session_state
@@ -42,7 +77,9 @@ def init():
     ss.update(UI_DEFAULTS)
     for k, key in PROB_KEYS.items():
         ss[key] = int(C.DEFAULT_PROB[k] * 100)
+    ss.update(MACRO_DEFAULTS)
     ss["applied_custom"] = None
+    ss["applied_macro"] = None
     ss["calc_time"] = dt.datetime.now().strftime("%m-%d %H:%M")
 
 
@@ -71,21 +108,34 @@ def live_scenario() -> C.Scenario:
 
 
 def scenario() -> C.Scenario:
-    """무거운 계산에 쓰는 시나리오: 프리셋 또는 [재계산]으로 확정한 직접입력."""
+    """무거운 계산에 쓰는 시나리오: 프리셋 또는 [재계산]으로 확정한 직접입력 + 확정한 공통 가정."""
     ss = st.session_state
-    if ss["scenario"] == "custom":
-        return ss.get("applied_custom") or live_scenario()
-    return C.SCENARIOS[ss["scenario"]]
+    sc = (ss.get("applied_custom") or live_scenario()) if ss["scenario"] == "custom" else C.SCENARIOS[ss["scenario"]]
+    return overlay(sc, macro_applied())
 
 
 def light_scenario() -> C.Scenario:
     """가벼운 계산(원가·탄소·표)은 입력값을 실시간 반영."""
-    return live_scenario() if st.session_state["scenario"] == "custom" else scenario()
+    ss = st.session_state
+    sc = live_scenario() if ss["scenario"] == "custom" else C.SCENARIOS[ss["scenario"]]
+    return overlay(sc, macro_live())
+
+
+def macro_pending() -> bool:
+    return macro_live() != macro_applied()
 
 
 def needs_recalc() -> bool:
     ss = st.session_state
-    return ss["scenario"] == "custom" and ss.get("applied_custom") != live_scenario()
+    return (ss["scenario"] == "custom" and ss.get("applied_custom") != live_scenario()) or macro_pending()
+
+
+def apply_recalc():
+    ss = st.session_state
+    if ss["scenario"] == "custom":
+        ss["applied_custom"] = live_scenario()
+    ss["applied_macro"] = macro_live()
+    ss["calc_time"] = dt.datetime.now().strftime("%m-%d %H:%M")
 
 
 def probs() -> dict:
@@ -101,11 +151,29 @@ def badges(sc: C.Scenario) -> list[str]:
     return [f"성장률 ×{sc.growth_mult:.2f}" + (f" 충격 {sc.demand_shock * 100:.0f}%" if sc.demand_shock else ""),
             f"EUA ×{sc.eua_mult:.1f}", f"{'위치기반' if sc.location_based else '시장기반'}({cap})",
             f"CBAM {sc.cbam_share * 100:.0f}%→{sc.cbam_share_2030 * 100:.0f}%",
-            f"역내페널티 ${sc.iaa_penalty:.0f}"]
+            f"역내페널티 ${sc.iaa_penalty:.0f}"] + macro_badges(sc)
+
+
+MACRO_LABEL = {"material_2026": ("소재", "${:.0f}", 1), "material_rate_1": ("소재~30", "{:+.1f}%", 100),
+               "material_rate_2": ("소재31~", "{:+.1f}%", 100), "price_rate_1": ("판가~30", "{:+.1f}%", 100),
+               "price_rate_2": ("판가31~", "{:+.1f}%", 100), "conv_learning": ("학습", "{:+.1f}%", 100),
+               "wacc": ("WACC", "{:.1f}%", 100), "fx": ("환율", "{:.2f}", 1), "inventory_rate": ("재고", "{:.0f}%", 100),
+               "fixed_opex_growth": ("고정비↑", "{:.1f}%", 100), "tax_delta": ("세율", "{:+.0f}%p", 100)}
+
+
+def macro_badges(sc: C.Scenario) -> list[str]:
+    """기준값에서 바뀐 공통 가정만 배지로 표시."""
+    out = []
+    for f, (label, fmt, u) in MACRO_LABEL.items():
+        v = getattr(sc, f)
+        if abs(v - getattr(_BASE, f)) > 1e-12:
+            out.append(f"{label} {fmt.format(v * u)}")
+    return out
 
 
 def context(sc: C.Scenario) -> str:
-    return f"시나리오: {SCEN_LABELS[st.session_state['scenario']]} | " + " | ".join(badges(sc)[:4])
+    b = badges(sc)
+    return f"시나리오: {SCEN_LABELS[st.session_state['scenario']]} | " + " | ".join(b[:4] + b[5:])
 
 
 HEADER: dict = {}
@@ -137,9 +205,13 @@ def evaluate_all(sc: C.Scenario) -> dict:
     return A.evaluate_all(data(), sc)
 
 
-@st.cache_data(show_spinner="5대 시나리오 결과 불러오는 중…")
-def npv_matrix():
-    return A.npv_matrix(data())
+def _official_from(macro: tuple) -> dict:
+    return {k: overlay(v, dict(macro)) for k, v in C.SCENARIOS.items()}
+
+
+@st.cache_data(show_spinner="5대 시나리오 결과 불러오는 중…", max_entries=8)
+def npv_matrix(macro: tuple = ()):
+    return A.npv_matrix(data(), _official_from(macro) if macro else None)
 
 
 @st.cache_data(show_spinner=False, max_entries=32)
@@ -158,8 +230,8 @@ def tornado(f: str, sc: C.Scenario):
 
 
 @st.cache_data(show_spinner="투자 시기 옵션 계산 중…", max_entries=32)
-def timing(f: str, prob: tuple):
-    return A.timing_options(data(), f, dict(prob))
+def timing(f: str, prob: tuple, macro: tuple = ()):
+    return A.timing_options(data(), f, dict(prob), _official_from(macro) if macro else None)
 
 
 @st.cache_data(show_spinner="수요 몬테카를로 경로 생성 중…", max_entries=16)
@@ -172,6 +244,16 @@ def disruption(sc: C.Scenario, factories: tuple, target, p, dur, loss):
     return A.disruption_mc(data(), sc, list(factories), target=target, p=p, duration=dur, loss=loss)
 
 
-@st.cache_data(show_spinner="권고안 계산 중…", max_entries=16)
-def recommendation(prob: tuple, sc: C.Scenario):
-    return B.recommendation(data(), dict(prob), sc)
+@st.cache_data(show_spinner="권고안 계산 중 (25개 대안 × 5대 시나리오)…", max_entries=16)
+def recommendation(prob: tuple, sc: C.Scenario, macro: tuple = ()):
+    return B.recommendation(data(), dict(prob), sc, _official_from(macro) if macro else None)
+
+
+@st.cache_data(show_spinner=False, max_entries=16)
+def pareto(prob: tuple, macro: tuple = ()):
+    return B.pareto_table(data(), dict(prob), _official_from(macro) if macro else None)
+
+
+def macro_key() -> tuple:
+    """캐시 키용: 확정한 공통 가정 중 기준값과 다른 것만."""
+    return tuple(sorted(macro_changed(macro_applied()).items()))

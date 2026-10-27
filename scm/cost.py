@@ -52,14 +52,14 @@ def lane_table(d: dict, sc: C.Scenario, t: int, factories: list[str] | None = No
 
     price = dem["purchase_price_usd_per_kwh_2026"].values * D.price_index(t, sc)
     out = pd.DataFrame(index=L.index)
-    out["material"] = D.material(t) / fac["yield_rate"].values
-    out["conversion"] = fac["conversion_cost_usd_per_kwh_ex_material"].values * D.conversion_index(t)
+    out["material"] = D.material(t, sc) / fac["yield_rate"].values
+    out["conversion"] = fac["conversion_cost_usd_per_kwh_ex_material"].values * D.conversion_index(t, sc)
     out["power"] = C.POWER_KWH_PER_KWH * fac["electricity_price_usd_per_kwh"].values
     out["transport"] = L["freight_cost_usd_per_kwh_finished_pack"].values
     out["tariff"] = price * L["tariff_pct_of_customs_value"].values / 100
-    out["inventory"] = (C.INVENTORY_RATE * (L["lead_time_days"].values + C.SAFETY_DAYS) / 365
+    out["inventory"] = (sc.inventory_rate * (L["lead_time_days"].values + C.SAFETY_DAYS) / 365
                         * (out["material"] + out["conversion"]))
-    eua_usd_per_kg = D.eua_eur(d, t, sc) * C.FX / 1000
+    eua_usd_per_kg = D.eua_eur(d, t, sc) * sc.fx / 1000
     share = sc.cbam_share_2030 if t >= 2030 else sc.cbam_share
     emb = L["product_embedded_co2e_kg_per_kwh_proxy"].values
     out["cbam"] = np.where(from_kr & is_eu, emb * share * eua_usd_per_kg, 0.0)

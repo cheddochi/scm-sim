@@ -79,3 +79,25 @@ def test_title_wrap():
     assert wrap("짧은 제목", 36) == "짧은 제목"
     w = wrap("[단위: $M | 네트워크 증분 NPV · 5종 비교 | 시나리오: 1. 기준 | 출처: 시뮬레이터]", 30)
     assert w.count("<br>") == 1 and "|<br>" not in w and "<br>|" not in w
+
+
+def test_macro_landed_cost(d):
+    """비용·거시 공통 가정: 소재비 +$5 → 오창 볼프스부르크 소재비 +5/0.95, 재고비도 함께 증가. 환율은 CBAM에 비례."""
+    from scm import cost as K
+    w = "D_EU_DE_VW_WOLFSBURG"
+    base = K.lane_table(d, C.SCENARIOS["base"], 2026).xs(w, level=1).loc[C.OCHANG]
+    hi = K.lane_table(d, C.SCENARIOS["base"].with_(material_2026=55.0), 2026).xs(w, level=1).loc[C.OCHANG]
+    assert hi["material"] - base["material"] == pytest.approx(5 / 0.95)
+    assert hi["inventory"] > base["inventory"]
+    fx = K.lane_table(d, C.SCENARIOS["base"].with_(fx=1.21), 2026).xs(w, level=1).loc[C.OCHANG]
+    assert fx["cbam"] == pytest.approx(base["cbam"] * 1.1)
+
+
+def test_macro_finance(d):
+    """WACC↑·법인세↑는 기존 네트워크 NPV를 낮춘다. 기본값은 케이스 값(15,986) 그대로."""
+    sc = C.SCENARIOS["base"]
+    run = N.run_network(d, sc, C.EXISTING)
+    npv0 = F.network_npv(d, run)[0]
+    assert npv0 == pytest.approx(15986, abs=1.5)
+    assert F.network_npv(d, dict(run, scenario=sc.with_(wacc=0.10)))[0] < npv0
+    assert F.network_npv(d, dict(run, scenario=sc.with_(tax_delta=0.05)))[0] < npv0

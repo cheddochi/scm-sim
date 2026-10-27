@@ -30,7 +30,7 @@ with st.sidebar:
                 unsafe_allow_html=True)
 
 # 공식 시나리오 5종은 시작 시 한 번 계산(디스크 캐시)
-S.npv_matrix()
+S.npv_matrix(S.macro_key())
 
 sc = S.scenario()
 badges = "".join(f"<span>{b}</span>" for b in S.badges(S.light_scenario()))
@@ -48,9 +48,11 @@ with c2:
     if st.button("프리셋 초기화", use_container_width=True):
         st.session_state["scenario"] = "base"
         st.session_state.update(S.preset_values(S.C.SCENARIOS["base"]))
+        st.session_state.update(S.MACRO_DEFAULTS)
+        st.session_state["applied_macro"] = None
         st.rerun()
 with c3:
-    keys = list(S.preset_values(S.C.SCENARIOS["base"])) + list(S.PROB_KEYS.values())
+    keys = list(S.preset_values(S.C.SCENARIOS["base"])) + list(S.PROB_KEYS.values()) + list(S.MACRO)
     st.download_button("저장(JSON)", json.dumps({k: st.session_state[k] for k in keys}, ensure_ascii=False, indent=1),
                        file_name="시나리오_입력값.json", use_container_width=True)
 

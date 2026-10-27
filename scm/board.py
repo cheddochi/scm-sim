@@ -21,15 +21,15 @@ def ko(f: str) -> str:
     return C.FACTORY_KO.get(f, f)
 
 
-def extended_matrix(d: dict) -> pd.DataFrame:
+def extended_matrix(d: dict, scenarios: dict | None = None) -> pd.DataFrame:
     """대안 = 투자 안 함 + 후보지 8곳 × 투자 형태 3종. 값은 시나리오별 증분 NPV.
 
     2단계·연기는 2028년에 시나리오가 판명된다는 전제의 조건부 선택 가치(analysis.timing_options).
     """
-    m = A.npv_matrix(d)
+    m = A.npv_matrix(d, scenarios)
     rows = {A.NO_INVEST: m.loc[A.NO_INVEST]}
     for f in C.CANDIDATES:
-        bs = A.timing_options(d, f, C.DEFAULT_PROB)["by_scenario"]
+        bs = A.timing_options(d, f, C.DEFAULT_PROB, scenarios)["by_scenario"]
         rows[f"{f}|now"] = m.loc[f]
         rows[f"{f}|phased"] = bs["phased"].reindex(m.columns)
         rows[f"{f}|delay"] = bs["delay"].reindex(m.columns)
@@ -44,11 +44,11 @@ def fmt_m(x: float, sign: bool = True) -> str:
     return ("+" if sign and x > 0.5 else "") + s
 
 
-def recommendation(d: dict, prob: dict, base: C.Scenario) -> dict:
+def recommendation(d: dict, prob: dict, base: C.Scenario, scenarios: dict | None = None) -> dict:
     """권고 = 투자 형태까지 포함한 25개 대안 중 기대 NPV 최대. 최대 후회도 같은 대안 집합에서 계산."""
-    m = A.npv_matrix(d)
+    m = A.npv_matrix(d, scenarios)
     er = A.expected_and_regret(m, prob)                 # 후보지 단위(즉시 전량) 비교
-    ext = extended_matrix(d)
+    ext = extended_matrix(d, scenarios)
     er_ext = A.expected_and_regret(ext, prob)
     best_key = er_ext["expected_npv"].idxmax()
     minimax_key = er_ext["max_regret"].idxmin()
@@ -58,7 +58,7 @@ def recommendation(d: dict, prob: dict, base: C.Scenario) -> dict:
     if best == A.NO_INVEST:
         out.update(timing=None, form="투자 보류", form_npv=0.0, form_worst=0.0, form_regret=0.0)
         return out
-    out.update(timing=A.timing_options(d, best, prob), form=FORMS[best_key.split("|")[1]],
+    out.update(timing=A.timing_options(d, best, prob, scenarios), form=FORMS[best_key.split("|")[1]],
                form_npv=float(er_ext.loc[best_key, "expected_npv"]), form_worst=float(er_ext.loc[best_key, "worst_npv"]),
                form_regret=float(er_ext.loc[best_key, "max_regret"]),
                now_regret=float(er_ext.loc[f"{best}|now", "max_regret"]))
@@ -124,11 +124,12 @@ def triggers(d: dict, rec: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def pareto_table(d: dict, prob: dict) -> pd.DataFrame:
+def pareto_table(d: dict, prob: dict, scenarios: dict | None = None) -> pd.DataFrame:
     """효율(기대 증분 NPV) 대 회복탄력성(2035 탄소 안전마진, 유럽 평균 리드타임, 최대 거점 의존도)."""
-    er = A.expected_and_regret(A.npv_matrix(d), prob)
+    scenarios = scenarios or C.SCENARIOS
+    er = A.expected_and_regret(A.npv_matrix(d, scenarios), prob)
     ct = A.carbon_table(d)
-    base_eval = A.evaluate_all(d, C.SCENARIOS["base"])
+    base_eval = A.evaluate_all(d, scenarios["base"])
     rows = []
     for f in C.CANDIDATES:
         pl = base_eval["runs"][f]["pl"]

@@ -20,12 +20,12 @@ class FinanceRules:
 RULES = FinanceRules()
 
 
-def discount(t) -> np.ndarray:
-    return 1 / (1 + C.WACC) ** (np.asarray(t) - C.BASE_YEAR)
+def discount(t, wacc: float = C.WACC) -> np.ndarray:
+    return 1 / (1 + wacc) ** (np.asarray(t) - C.BASE_YEAR)
 
 
 def factory_cashflow(d: dict, pl: pd.DataFrame, f: str, rules: FinanceRules = RULES,
-                     stages=D.FULL_NOW, subsidy_mult: float = 1.0) -> pd.DataFrame:
+                     stages=D.FULL_NOW, subsidy_mult: float = 1.0, tax_delta: float = 0.0) -> pd.DataFrame:
     """공장 하나의 연도별 세후 현금흐름($M)."""
     p = pl[pl.factory == f].set_index("year").reindex(C.YEARS).fillna(0.0)
     capex = pd.Series(D.capex_flows(d, f, stages, subsidy_mult), dtype=float).reindex(C.YEARS).fillna(0.0)
@@ -33,13 +33,13 @@ def factory_cashflow(d: dict, pl: pd.DataFrame, f: str, rules: FinanceRules = RU
     taxable = p["ebitda"] - dep
     if rules.tax_losses == "none":
         taxable = taxable.clip(lower=0)
-    tax = taxable * C.TAX[f]
+    tax = taxable * max(C.TAX[f] + tax_delta, 0.0)
     cf = p["ebitda"] - tax - capex
     return pd.DataFrame({"ebitda": p["ebitda"], "dep": dep, "tax": tax, "capex": capex, "cf": cf})
 
 
-def npv(cf: pd.Series) -> float:
-    return float((cf.values * discount(cf.index)).sum())
+def npv(cf: pd.Series, wacc: float = C.WACC) -> float:
+    return float((cf.values * discount(cf.index, wacc)).sum())
 
 
 def irr(cf: pd.Series) -> float | None:
@@ -71,10 +71,10 @@ def payback_year(cf: pd.Series) -> int | None:
 
 
 def network_npv(d: dict, run: dict, rules: FinanceRules = RULES) -> tuple[float, dict]:
-    sm = run["scenario"].subsidy_mult
-    flows = {f: factory_cashflow(d, run["pl"], f, rules, run["plan"].get(f, D.FULL_NOW), sm)
+    sc = run["scenario"]
+    flows = {f: factory_cashflow(d, run["pl"], f, rules, run["plan"].get(f, D.FULL_NOW), sc.subsidy_mult, sc.tax_delta)
              for f in run["pl"].factory.unique()}
-    return sum(npv(v["cf"]) for v in flows.values()), flows
+    return sum(npv(v["cf"], sc.wacc) for v in flows.values()), flows
 
 
 def evaluate_candidate(d: dict, sc: C.Scenario, f: str, base_run: dict | None = None,
@@ -84,7 +84,7 @@ def evaluate_candidate(d: dict, sc: C.Scenario, f: str, base_run: dict | None = 
     npv0, _ = network_npv(d, base_run, rules)
     npv1, flows = network_npv(d, with_run, rules)
     own = flows[f]["cf"]
-    return {"factory": f, "plant_npv": npv(own), "plant_irr": irr(own), "payback": payback_year(own),
+    return {"factory": f, "plant_npv": npv(own, sc.wacc), "plant_irr": irr(own), "payback": payback_year(own),
             "network_npv": npv1 - npv0, "base_npv": npv0, "run": with_run, "flows": flows}
 
 
