@@ -138,6 +138,9 @@ def screen_inputs():
 
         U.panel_title("현재 적용 가정 명세표 (슬라이드 주석용 · 변경값 주황)")
         spec = assumption_spec(sc_live)
+        n_chg = int(spec["_chg"].sum())
+        S.header(f"{S.SCEN_LABELS[st.session_state['scenario']]} 적용 — 기준 대비 변경 {n_chg}건"
+                 + (f" ({', '.join(spec.index[spec['_chg']][:3])})" if n_chg else ""))
         chg = {(i, "값"): r["_chg"] for i, r in spec.iterrows()}
         U.show_table(spec[["구분", "값", "출처"]], raw={"구분"}, left={"값", "출처"}, chg=chg, index_label="항목")
         U.csv_button(spec.drop(columns=["_chg"]).assign(구분=spec["_kind"]).drop(columns=["_kind"]), "가정명세표.csv")
@@ -254,24 +257,25 @@ def screen_demand():
         p_short = A.shortfall_prob(eu_paths, yd, 90, share)
         p_short2 = A.shortfall_prob(eu_paths, yd, 90 + cap_new, share)
         gap_y = (D.demand(d, sc).loc[D.eu_customers(d), yd].sum() * share) - 90
+        S.header(f"{yd}년 유럽 수요가 기존 용량을 {gap_y:,.0f}GWh 초과 — "
+                 + ("유럽 신규 거점 필요" if gap_y > 0 else "기존 용량으로 충분"))
         cl, cr = st.columns([7, 3])
         with cl:
             if is_eu:
-                title = (f"유럽 공략 가능 물량은 {yd}년 브로츠와프 90GWh를 {gap_y:,.1f}GWh 넘으며, "
-                         f"MC 경로의 {p_short:.0%}가 공급 부족")
+                title = f"{yd}년 유럽 물량이 브로츠와프 용량을 {gap_y:,.0f}GWh 초과 — 부족 확률 {p_short:.0%}"
             else:
-                title = f"{st.session_state['cust']} 공략 가능 물량: {yd}년 중앙값 {p50[iy]:,.1f}GWh (10~90% {p10[iy]:,.0f}~{p90[iy]:,.0f})"
+                title = f"{st.session_state['cust']}: {yd}년 중앙값 {p50[iy]:,.1f}GWh (10~90% {p10[iy]:,.0f}~{p90[iy]:,.0f})"
             fig = CH.spaghetti(years, paths[:50], p10, p50, p90, lines, 90 if is_eu else 0, title,
                                S.subtitle(f"GWh/년, 수요×수주상한 {share:.0%}", sc,
                                           extra=f"MC {len(paths):,}경로 · σ승수 {mc['sigma_mult']:.2f} · σ연 {st.session_state['mc_sd']:.1f}%p"))
-            st.plotly_chart(fig, use_container_width=True, config=CH.config("수요_스파게티"))
+            CH.show(fig, "수요_스파게티", "full")
         with cr:
-            title2 = (f"{yd}년 90GWh 초과 {p_short:.0%}, {90 + cap_new:.0f}GWh 초과 {p_short2:.0%}")
+            title2 = f"{ko(cand)} 추가해도 부족 확률 {p_short2:.0%}"
             fig2 = CH.distribution(eu_paths[:, iy] * share,
                                    {f"브로츠와프 단독 90": (90, U.NAVY),
                                     f"+{ko(cand)} {90 + cap_new:.0f}": (90 + cap_new, U.ORANGE)},
                                    title2, S.subtitle("GWh", sc, extra="유럽 12개 OEM"))
-            st.plotly_chart(fig2, use_container_width=True, config=CH.config("수요_분포"))
+            CH.show(fig2, "수요_분포", "narrow")
         bl, br = st.columns([3, 2])
         with bl:
             U.panel_title("OEM 고객별 수요와 수주 상한 물량 (GWh)")
@@ -337,6 +341,9 @@ def screen_network():
     with right:
         ev = S.evaluate_all(sc)
         run = ev["runs"][cand]
+        tbc = ev["table"].loc[cand]
+        S.header(f"{ko(cand)}: 공장 NPV {B.fmt_m(tbc['plant_npv'])} → 네트워크 증분 {B.fmt_m(tbc['network_npv'])} "
+                 f"(잠식 {B.fmt_m(tbc['cannibalization'])}, $M)")
         pl = run["pl"]
         util = pl.pivot(index="factory", columns="year", values="volume") / \
             pl.pivot(index="factory", columns="year", values="capacity").replace(0, np.nan)
@@ -348,10 +355,10 @@ def screen_network():
             sp = shadow[2035].to_dict() if 2035 in shadow else {}
             cc = A.capital_cost_per_kwh(d, cand)
             nm = ko(cand)
-            title = (f"{nm} 2035년 생산능력 잠재가격 ${sp.get(nm, 0):.1f}/kWh는 "
-                     f"연간 자본비용 ${cc:.1f}/kWh {'초과' if sp.get(nm, 0) > cc else '미달'}")
-            st.plotly_chart(CH.util_heatmap(util, shadow, title, S.subtitle("% · $/kWh", sc, src="시뮬레이터 M2 LP")),
-                            use_container_width=True, config=CH.config("가동률_잠재가격"))
+            sp_n = sp.get(nm, 0)
+            title = f"{nm} 2035 잠재가격 ${sp_n:.1f} {'>' if sp_n > cc else '<'} 자본비용 ${cc:.1f}"
+            CH.show(CH.util_heatmap(util, shadow, title, S.subtitle("% · $/kWh", sc, src="시뮬레이터 M2 LP")),
+                    "가동률_잠재가격", "half")
         with cr:
             tab1, tab2 = st.tabs([f"고객별 공급 비중 ({ys})", "레인별 도착원가 분해 (M1)"])
             with tab1:
@@ -367,9 +374,8 @@ def screen_network():
                 eu_share_new = (lt.xs(cand, level=0)["flow"] * lt.xs(cand, level=0)["is_eu"]).sum() / max(
                     (lt["flow"] * lt["is_eu"]).sum(), 1e-9)
                 colors = dict(FACTORY_COLORS, **{nm: U.ORANGE})
-                st.plotly_chart(CH.stacked_share(share, colors, f"{ys}년 {nm}이 유럽 공급의 {eu_share_new:.0%}를 담당",
-                                                 S.subtitle("공급 비중 %", sc)),
-                                use_container_width=True, config=CH.config("고객별_공급비중"))
+                CH.show(CH.stacked_share(share, colors, f"{ys}년 {nm}이 유럽 공급의 {eu_share_new:.0%} 담당",
+                                         S.subtitle("공급 비중 %", sc)), "고객별_공급비중", "half")
             with tab2:
                 cust = st.session_state["lane_cust"]
                 rows = {}
@@ -394,11 +400,12 @@ def screen_network():
                 cheapest = cb["총원가(고정비 포함)"].idxmin()
                 var_cheap = cb["도착원가(고정비 제외)"].idxmin()
                 cname = d["demand"].loc[cust, "oem_site"]
-                title = (f"{ys}년 {cname} 공급: 변동원가 최저 {var_cheap}, 고정비 포함 최저 {cheapest}"
-                         + (" (역전)" if cheapest != var_cheap else ""))
-                st.plotly_chart(CH.cost_breakdown(cb[list(items)], items, cheapest, title,
-                                                  S.subtitle("$/kWh", sc_live, src="시뮬레이터 M1")),
-                                use_container_width=True, config=CH.config("도착원가"))
+                gap_c = cb["총원가(고정비 포함)"].sort_values()
+                title = (f"{cname}행 최저 원가는 {cheapest} (차 ${gap_c.iloc[1] - gap_c.iloc[0]:.1f}/kWh)"
+                         + (" — 고정비 넣으면 역전" if cheapest != var_cheap else ""))
+                CH.show(CH.cost_breakdown(cb[list(items)], items, cheapest, title,
+                                          S.subtitle(f"$/kWh, {ys}년, 고정비 제외 막대", sc_live, src="시뮬레이터 M1")),
+                        "도착원가", "half")
                 tbl = pd.DataFrame({f"{ko(f)} {y}": rows[(y, f)] for y in sorted({2026, ys}) for f in C.EXISTING + [cand]})
                 U.show_table(tbl, fmt={c: (2,) for c in tbl.columns},
                              row_class={"도착원가(고정비 제외)": "hl", "총원가(고정비 포함)": "acc"})
@@ -417,11 +424,11 @@ def screen_network():
             tm = S.timing(cand, tuple(S.probs().items()))
             s = tm["summary"]
             best = s["expected_npv"].idxmax()
-            title = (f"{ko(cand)}: '{best}'가 기대 NPV {s.loc[best, 'expected_npv']:,.0f}로 최고, "
-                     f"최악 손실은 {s.loc[best, 'worst_npv']:,.0f}".replace("-", "−"))
-            st.plotly_chart(CH.timing_bars(s, best, title, S.subtitle("$M, 2026 현가(WACC 9%)", None,
-                                                                    extra="5대 시나리오 확률 가중", src="시뮬레이터 M5")),
-                            use_container_width=True, config=CH.config("투자시기"))
+            title = (f"{ko(cand)}은 {best.split('(')[0]}이 최선: 기대 {B.fmt_m(s.loc[best, 'expected_npv'])}, "
+                     f"최악 {B.fmt_m(s.loc[best, 'worst_npv'])}")
+            CH.show(CH.timing_bars(s, best, title, S.subtitle("$M, 2026 현가(WACC 9%)", None,
+                                                            extra="5대 시나리오 확률 가중", src="시뮬레이터 M5")),
+                    "투자시기", "full")
             bt = tm["by_scenario"][["now", "half_only", "phased_full", "phased", "delay_full", "delay"]]
             bt.columns = ["즉시 전량", "1단계만", "1+2단계", "분할(선택)", "연기 실행", "연기(선택)"]
             bt.index = [S.SCEN_SHORT[k] for k in bt.index]
@@ -481,29 +488,32 @@ def screen_board():
         recalc_box()
     with right:
         if not S.prob_ok():
+            S.header("확률 합계가 100%가 아니어서 권고안을 계산하지 않았습니다")
             st.markdown('<div class="warnbar">확률 합계가 100%가 아니어서 보드 계산을 멈췄습니다. 왼쪽 패널을 고쳐 주세요.</div>',
                         unsafe_allow_html=True)
             return
         prob = S.probs()
         rec = S.recommendation(tuple(prob.items()), sc)
         best, er, m = rec["best"], rec["er"], rec["matrix"]
+        er_ext, ext, bk = rec["er_ext"], rec["ext"], rec["best_key"]
         ck = B.carbon_kpi(d)
         nm = ko(best)
         cap = d["factories"].loc[best, "target_capacity_gwh_yr"] if best in d["factories"].index else 0
         sg = rec.get("switch_growth")
-        regret_rank = int(er.loc[best, "rank_regret"])
         ct = ck["table"]
-        best_cf = (U.badge("2035 통과", "g") if best in ct.index and ct.loc[best, "pass_2035"] else U.badge("2035 초과", "r"))
+        best_cf = (U.badge("통과", "g") if best in ct.index and ct.loc[best, "pass_2035"] else U.badge("초과", "r"))
+        n_alt = len(er_ext)
+        same = rec["minimax_key"] == bk
+        S.header(f"권고: {nm} {cap:.0f}GWh {rec['form']} — 기대 {B.fmt_m(rec['form_npv'])}, 최대 후회 {rec['form_regret']:,.0f} ($M)")
         kpis = [
-            ("권고 거점·투자안", f"{nm} {cap:.0f}GWh", f"{rec['form']} · 차선 {ko(rec['minimax'])}(최소 후회)", True),
+            ("권고 거점·투자안", f"{nm} {cap:.0f}GWh", f"{rec['form']} · 기대 NPV·최소 후회 {'모두 1위' if same else '기준 상이'}", True),
             ("5대 시나리오 기대 증분 NPV", f"{B.fmt_m(rec['form_npv'])} $M",
-             f"즉시 전량 {B.fmt_m(er.loc[best, 'expected_npv'])} · 최악 {B.fmt_m(rec['form_worst'])}", False),
-            ("최대 후회 (Maximum Regret)", f"{er.loc[best, 'max_regret']:,.0f} $M",
-             f"후회 최소 순위 {regret_rank}위 · 최악 {S.SCEN_SHORT.get(er.loc[best, 'worst_regret_scenario'], '')}", False),
-            ("유럽 탄소 상한(위치기반) 적합성", f"{ck['pass_2035']}/{ck['n']} 곳",
-             f"2035 60kg 통과 후보지 · 권고안 {best_cf}", False),
+             f"최악 {B.fmt_m(rec['form_worst'])} · 즉시 전량이면 {B.fmt_m(er.loc[best, 'expected_npv'])}", False),
+            ("최대 후회 (권고안 기준)", f"{rec['form_regret']:,.0f} $M",
+             f"{n_alt}개 대안 중 {int(er_ext.loc[bk, 'rank_regret'])}위 · 즉시 전량이면 {rec['now_regret']:,.0f}", False),
+            ("2035 위치기반 60kg 통과", f"{ck['pass_2035']}/{ck['n']} 곳", f"후보지 기준 · 권고 거점 {best_cf}", False),
             ("이사회 전환 임계값", f"성장률 ×{sg:.2f}" if sg else "전 구간 양(+)",
-             "이하로 하회 시 2단계 보류 / 위치기반 60kg 확정 여부", False),
+             "발주가 이 수준 밑이면 2단계 보류", False),
         ]
         st.markdown('<div class="kpis">' + "".join(
             f'<div class="kpi{" acc" if a else ""}"><div class="k">{k}</div><div class="v">{v}</div><div class="s">{s_}</div></div>'
@@ -511,43 +521,55 @@ def screen_board():
 
         cl, cr = st.columns(2)
         with cl:
-            mm = m.copy()
-            mm["기대 NPV"] = er["expected_npv"]
+            rows = [A.NO_INVEST] + C.CANDIDATES
+            mm = m.loc[rows].copy()
+            for form in ("phased", "delay"):
+                mm.loc[f"{best}|{form}"] = ext.loc[f"{best}|{form}"]
+            mm["기대"] = er_ext["expected_npv"].reindex(mm.index).fillna(er["expected_npv"])
+            mm["최대후회"] = er_ext["max_regret"].reindex(mm.index).fillna(er["max_regret"])
             mm.index = [ko(i) for i in mm.index]
             mm.columns = [S.SCEN_SHORT.get(c, c) for c in mm.columns]
             cur = S.SCEN_SHORT.get(st.session_state["scenario"])
-            top2 = er["expected_npv"].sort_values(ascending=False)
-            title = (f"{nm}만 5대 시나리오 중 {int((m.loc[best] > 0).sum())}개에서 양(+), "
-                     f"확률 가중 {B.fmt_m(top2.iloc[0])}로 1위")
-            st.plotly_chart(CH.scenario_heatmap(mm, nm, cur, title,
-                                                S.subtitle("$M, 2026 현가(WACC 9%)", C.SCENARIOS['base'],
-                                                           src="시뮬레이터 M4·M5", extra="네트워크 증분 NPV").replace(
-                                                    "시나리오: 1. 기준", "시나리오: 5종 비교")),
-                            use_container_width=True, config=CH.config("시나리오별_증분NPV"))
+            n_pos = int((m.loc[best] > 0).sum())
+            title = f"{nm}만 5개 중 {n_pos}개 시나리오에서 이익, 분할하면 최대 후회 {rec['form_regret']:,.0f}"
+            CH.show(CH.scenario_heatmap(mm, ko(bk), cur, title,
+                                        S.subtitle("$M, 2026 현가(WACC 9%)", None, src="시뮬레이터 M4·M5",
+                                                   extra="네트워크 증분 NPV · 5종 비교")),
+                    "시나리오별_증분NPV", "half")
             tor = rec["tornado"]
             top = tor.iloc[0]
-            title = f"{nm} 증분 NPV를 가장 크게 흔드는 변수는 {top['variable']} (변동폭 {top['swing']:,.0f})"
-            st.plotly_chart(CH.tornado(tor, title, S.subtitle("$M", sc, src="시뮬레이터 M5")),
-                            use_container_width=True, config=CH.config("토네이도"))
+            title = f"{nm} NPV를 가장 크게 흔드는 변수는 {top['variable']}"
+            CH.show(CH.tornado(tor, title, S.subtitle(f"$M, 변동폭 {top['swing']:,.0f}", sc, src="시뮬레이터 M5")),
+                    "토네이도", "half")
         with cr:
             sw = rec["switch_curve"]
             labels = {f: ko(f) for f in sw.columns}
-            title = (f"수요 성장률이 기준의 {sg:.0%} 아래로 떨어지면 {nm} 증분 NPV가 음(−)으로 전환"
-                     if sg else f"{nm} 증분 NPV는 성장률 승수 0.3~1.2 전 구간에서 부호 유지")
-            st.plotly_chart(CH.switchpoint(sw, labels, best, sg, title, S.subtitle("$M", sc, src="시뮬레이터 M5")),
-                            use_container_width=True, config=CH.config("스위치포인트"))
+            title = (f"수요가 기준의 {sg:.0%} 밑이면 {nm} NPV 음(−) 전환" if sg
+                     else f"{nm} NPV는 성장률 0.3~1.2배 전 구간 부호 유지")
+            CH.show(CH.switchpoint(sw, labels, best, sg, title, S.subtitle("$M, 즉시 전량 기준", sc, src="시뮬레이터 M5")),
+                    "스위치포인트", "half")
+            U.panel_title(f"기대 NPV·최대 후회 상위 대안 ({n_alt}개 = 후보지 8 × 투자 형태 3 + 투자 안 함)")
+            top_alt = er_ext.sort_values("expected_npv", ascending=False).head(8)
+            ta = pd.DataFrame({"기대 NPV": top_alt["expected_npv"], "최악 NPV": top_alt["worst_npv"],
+                               "최대 후회": top_alt["max_regret"],
+                               "후회 최악 시나리오": [S.SCEN_SHORT.get(x, x) for x in top_alt["worst_regret_scenario"]],
+                               "기대 순위": top_alt["rank_expected"], "후회 순위": top_alt["rank_regret"]})
+            ta.index = [ko(i) for i in ta.index]
+            U.show_table(ta, fmt={"기대 NPV": (0, True), "최악 NPV": (0, True), "최대 후회": (0,), "기대 순위": (0,),
+                                  "후회 순위": (0,)}, neg_red={"기대 NPV", "최악 NPV"}, row_class={ko(bk): "acc"},
+                         index_label="대안")
+            st.markdown('<div class="note">2단계·연기는 2028년에 시나리오가 판명된다는 전제의 조건부 선택 가치. '
+                        '후회 = 해당 시나리오 최선 대안 NPV − 이 대안 NPV.</div>', unsafe_allow_html=True)
         U.panel_title("이사회 분기 점검 지표와 행동 전환 조건 (Trigger, 질문 6-v)")
         tg = B.triggers(d, rec).set_index("지표")
         U.show_table(tg, left=set(tg.columns), index_label="지표")
         bl, br = st.columns(2)
         with bl:
             pt = B.pareto_table(d, prob)
-            front = [ko(f) for f in pt.index[pt["pareto"]]]
-            title = f"효율·탄소마진 파레토 경계: {', '.join(front[:4])} — {nm}은 기대 NPV 최고점"
-            st.plotly_chart(CH.pareto(pt, {f: ko(f) for f in pt.index}, best, title,
-                                      S.subtitle("$M · kg/kWh", None, extra="원 크기 = 최대 거점 의존도 낮을수록 큼",
-                                                 src="시뮬레이터 M3·M5")),
-                            use_container_width=True, config=CH.config("파레토"))
+            title = f"{nm}: 기대 NPV 1위이면서 탄소 마진 {pt.loc[best, 'carbon_margin']:+.1f}kg 확보"
+            CH.show(CH.pareto(pt, {f: ko(f) for f in pt.index}, best, title,
+                              S.subtitle("$M · kg/kWh", None, extra="원 크기 = 최대 거점 의존도 낮을수록 큼",
+                                         src="시뮬레이터 M3·M5")), "파레토", "half")
         with br:
             tgt = st.session_state["dis_target"]
             net = tuple(C.EXISTING + ([best] if best in C.CANDIDATES else []))
@@ -555,21 +577,20 @@ def screen_board():
                                int(st.session_state["dis_dur"]), st.session_state["dis_loss"] / 100)
             loss = res["loss"]
             buf = np.nanmean(res["ochang_buffer"])
-            title = (f"공장 중단 시 20년 손실 중앙값 {np.median(loss):,.0f}, 상위 10% {np.percentile(loss, 90):,.0f} — "
-                     f"오창이 유럽 손실 물량의 {buf:.0%} 완충")
-            st.plotly_chart(CH.loss_hist(loss, title, S.subtitle(
+            title = f"공장 중단 손실은 오창이 {buf:.0%}만 완충 — 상위 10% {np.percentile(loss, 90):,.0f}"
+            CH.show(CH.loss_hist(loss, title, S.subtitle(
                 "$M 현가", sc, src="시뮬레이터 M5",
-                extra=f"{len(loss)}회 · 중단확률 {st.session_state['dis_p']:.0f}%/공장·연 · {st.session_state['dis_dur']}년 · 용량 {st.session_state['dis_loss']}% 손실")),
-                use_container_width=True, config=CH.config("공장중단"))
-        out = m.copy()
+                extra=f"{len(loss)}회 · 중단 {st.session_state['dis_p']:.0f}%/공장·연 · {st.session_state['dis_dur']}년 · 용량 {st.session_state['dis_loss']}% 손실")),
+                "공장중단", "half")
+        out = ext.copy()
+        out = out.join(er_ext[["expected_npv", "worst_npv", "max_regret", "rank_expected", "rank_regret"]])
         out.index = [ko(i) for i in out.index]
-        out = out.join(er.set_index(out.index)[["expected_npv", "worst_npv", "max_regret"]])
         c1, c2 = st.columns([1, 6])
         with c1:
-            U.csv_button(out.round(1), "의사결정보드_시나리오별NPV.csv", "결과 CSV")
+            U.csv_button(out.round(1), "의사결정보드_대안별NPV.csv", "결과 CSV")
         with c2:
-            ps = A.prob_sensitivity(m, prob)
-            stable = (ps["best"] == best).all()
-            st.markdown(f'<div class="note">가중치 ±10%p 민감도: 10개 조합 중 {int((ps["best"] == best).sum())}개에서 {nm} 1위'
-                        f'{" — 권고 결론이 확률 가정에 강건" if stable else " — 확률 가정에 따라 권고가 바뀜"}. '
-                        f'차트 PNG는 각 차트 우상단 카메라 아이콘(3배 해상도).</div>', unsafe_allow_html=True)
+            ps = A.prob_sensitivity(ext, prob)
+            n_same = int((ps["best"] == bk).sum())
+            st.markdown(f'<div class="note">가중치 ±10%p 민감도: 10개 조합 중 {n_same}개에서 {ko(bk)} 1위'
+                        f'{" — 권고 결론이 확률 가정에 강건" if n_same == len(ps) else " — 확률 가정에 따라 권고가 바뀜"}. '
+                        f'차트 PNG는 우상단 카메라 아이콘(폭 고정 2배 해상도, 제목·부제 포함).</div>', unsafe_allow_html=True)

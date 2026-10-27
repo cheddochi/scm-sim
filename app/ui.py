@@ -45,7 +45,8 @@ div[data-testid="stPlotlyChart"] {{ background: #FFFFFF; border: 1px solid {LINE
 /* 화면 제목줄 */
 .shead {{ display:flex; justify-content:space-between; align-items:baseline; border-bottom:1px solid {LINE};
   padding:2px 0 4px 0; margin-bottom:4px; }}
-.shead .h {{ font-size:14px; font-weight:700; }}
+.shead .h {{ font-size:15px; font-weight:700; }}
+.shead .pg {{ font-size:11px; color:{SLATE}; margin-right:8px; border:1px solid {LINE}; padding:0 5px; border-radius:2px; }}
 .shead .ctx {{ font-size:11px; color:{SLATE}; }}
 .ptitle {{ font-size:12.5px; font-weight:700; margin:6px 0 2px 0; border-left:3px solid {BLUE}; padding-left:6px; }}
 .note {{ font-size:11px; color:{SLATE}; }}
@@ -118,9 +119,11 @@ def num(label, key, *, kind="slider", default=None, scenario_param=False, **kw):
 
 
 # ---------------------------------------------------------------- 표와 제목
-def screen_header(title: str, ctx: str):
-    st.markdown(f'<div class="shead"><span class="h">{html.escape(title)}</span>'
-                f'<span class="ctx">{html.escape(ctx)}</span></div>', unsafe_allow_html=True)
+def screen_header_html(page: str, headline: str, ctx: str) -> str:
+    """화면 제목줄: 화면명(작게) + 결론 문장(굵게) + 적용 가정."""
+    return (f'<div class="shead"><span><span class="pg">{html.escape(page)}</span>'
+            f'<span class="h">{html.escape(headline)}</span></span>'
+            f'<span class="ctx">{html.escape(ctx)}</span></div>')
 
 
 def panel_title(text: str):

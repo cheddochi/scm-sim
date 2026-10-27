@@ -9,8 +9,31 @@ from . import data as D
 from . import analysis as A
 
 
+FORMS = {"now": "즉시 전량", "phased": "2단계 분할", "delay": "2년 연기"}
+
+
 def ko(f: str) -> str:
-    return "투자 안 함" if f == A.NO_INVEST else C.FACTORY_KO.get(f, f)
+    if f == A.NO_INVEST:
+        return "투자 안 함"
+    if "|" in f:
+        site, form = f.split("|")
+        return f"{C.FACTORY_KO.get(site, site)} · {FORMS[form]}"
+    return C.FACTORY_KO.get(f, f)
+
+
+def extended_matrix(d: dict) -> pd.DataFrame:
+    """대안 = 투자 안 함 + 후보지 8곳 × 투자 형태 3종. 값은 시나리오별 증분 NPV.
+
+    2단계·연기는 2028년에 시나리오가 판명된다는 전제의 조건부 선택 가치(analysis.timing_options).
+    """
+    m = A.npv_matrix(d)
+    rows = {A.NO_INVEST: m.loc[A.NO_INVEST]}
+    for f in C.CANDIDATES:
+        bs = A.timing_options(d, f, C.DEFAULT_PROB)["by_scenario"]
+        rows[f"{f}|now"] = m.loc[f]
+        rows[f"{f}|phased"] = bs["phased"].reindex(m.columns)
+        rows[f"{f}|delay"] = bs["delay"].reindex(m.columns)
+    return pd.DataFrame(rows).T[m.columns]
 
 
 def fmt_m(x: float, sign: bool = True) -> str:
@@ -22,19 +45,23 @@ def fmt_m(x: float, sign: bool = True) -> str:
 
 
 def recommendation(d: dict, prob: dict, base: C.Scenario) -> dict:
+    """권고 = 투자 형태까지 포함한 25개 대안 중 기대 NPV 최대. 최대 후회도 같은 대안 집합에서 계산."""
     m = A.npv_matrix(d)
-    er = A.expected_and_regret(m, prob)
-    best = er["expected_npv"].idxmax()
-    minimax = er["max_regret"].idxmin()
-    out = {"matrix": m, "er": er, "best": best, "minimax": minimax}
+    er = A.expected_and_regret(m, prob)                 # 후보지 단위(즉시 전량) 비교
+    ext = extended_matrix(d)
+    er_ext = A.expected_and_regret(ext, prob)
+    best_key = er_ext["expected_npv"].idxmax()
+    minimax_key = er_ext["max_regret"].idxmin()
+    best = best_key.split("|")[0]
+    out = {"matrix": m, "er": er, "ext": ext, "er_ext": er_ext, "best_key": best_key, "best": best,
+           "minimax_key": minimax_key, "minimax": minimax_key.split("|")[0]}
     if best == A.NO_INVEST:
-        out.update(timing=None, form="투자 보류", form_npv=0.0, form_worst=0.0)
+        out.update(timing=None, form="투자 보류", form_npv=0.0, form_worst=0.0, form_regret=0.0)
         return out
-    tm = A.timing_options(d, best, prob)
-    s = tm["summary"]
-    form = s["expected_npv"].idxmax()
-    out.update(timing=tm, form=form, form_npv=float(s.loc[form, "expected_npv"]),
-               form_worst=float(s.loc[form, "worst_npv"]))
+    out.update(timing=A.timing_options(d, best, prob), form=FORMS[best_key.split("|")[1]],
+               form_npv=float(er_ext.loc[best_key, "expected_npv"]), form_worst=float(er_ext.loc[best_key, "worst_npv"]),
+               form_regret=float(er_ext.loc[best_key, "max_regret"]),
+               now_regret=float(er_ext.loc[f"{best}|now", "max_regret"]))
     sw = A.switchpoint_curve(d, base)
     out["switch_curve"] = sw
     zc = A.zero_crossings(sw[best])

@@ -58,5 +58,7 @@ if S.needs_recalc():
     st.markdown('<div class="warnbar">입력이 바뀌었으니 재계산이 필요합니다. 원가·탄소·표는 실시간 반영, '
                 'LP·NPV·몬테카를로는 왼쪽 패널 하단 [재계산] 후 갱신됩니다.</div>', unsafe_allow_html=True)
 
-U.screen_header(page, S.context(S.light_scenario()))
+S.HEADER["page"] = page
+S.HEADER["slot"] = st.empty()
+S.header("계산 중…")
 SCREENS[page]()

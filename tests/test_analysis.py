@@ -62,3 +62,20 @@ def test_board_triggers(d):
     rec = B.recommendation(d, C.DEFAULT_PROB, C.SCENARIOS["base"])
     tg = B.triggers(d, rec)
     assert len(tg) >= 4 and rec["best"] in C.CANDIDATES + [A.NO_INVEST]
+
+
+def test_extended_regret(d):
+    """기준 확률에서 권고안(투자 형태 포함)의 최대 후회가 같은 거점 즉시 전량 투자보다 작다."""
+    rec = B.recommendation(d, C.DEFAULT_PROB, C.SCENARIOS["base"])
+    assert len(rec["ext"]) == 1 + 3 * len(C.CANDIDATES)
+    assert rec["form_regret"] <= rec["now_regret"] + 1e-9
+    assert rec["er_ext"].loc[rec["best_key"], "expected_npv"] == rec["er_ext"]["expected_npv"].max()
+
+
+def test_title_wrap():
+    import sys
+    sys.path.insert(0, "app")
+    from charts import wrap
+    assert wrap("짧은 제목", 36) == "짧은 제목"
+    w = wrap("[단위: $M | 네트워크 증분 NPV · 5종 비교 | 시나리오: 1. 기준 | 출처: 시뮬레이터]", 30)
+    assert w.count("<br>") == 1 and "|<br>" not in w and "<br>|" not in w

@@ -108,6 +108,18 @@ def context(sc: C.Scenario) -> str:
     return f"시나리오: {SCEN_LABELS[st.session_state['scenario']]} | " + " | ".join(badges(sc)[:4])
 
 
+HEADER: dict = {}
+
+
+def header(headline: str):
+    """app.py가 잡아 둔 제목줄 자리에 결론 문장을 채운다."""
+    import ui as U
+    slot = HEADER.get("slot")
+    if slot is not None:
+        slot.markdown(U.screen_header_html(HEADER["page"], headline, context(light_scenario())),
+                      unsafe_allow_html=True)
+
+
 def subtitle(unit: str, sc: C.Scenario | None = None, src: str = "시뮬레이터", extra: str = "") -> str:
     name = SCEN_LABELS[st.session_state["scenario"]] if sc is None else (sc.name if sc.key in SCEN_LABELS else sc.name)
     parts = [f"단위: {unit}", extra, f"시나리오: {name}", f"출처: {src}"]

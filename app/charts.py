@@ -8,20 +8,57 @@ from plotly.subplots import make_subplots
 
 from ui import NAVY, BLUE, SLATE, GREY, LINE, ORANGE, RED, AMBER, GREEN, FONT
 
-PLOT_CONFIG = {"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"],
-               "toImageButtonOptions": {"format": "png", "scale": 3}}
+PLOT_CONFIG = {"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"]}
+
+# 화면 폭 등급별 제목 최대 글자 수(13px 굵게, 한글 기준)와 PNG 저장 폭(px).
+# 저장 폭을 고정해 화면 크기와 무관하게 슬라이드용 이미지 규격이 같도록 한다 (scale 2 → 실제 2배 픽셀).
+SIZES = {"full": (64, 1400), "half": (36, 900), "narrow": (22, 560)}
 
 
-def config(name: str) -> dict:
-    c = dict(PLOT_CONFIG)
-    c["toImageButtonOptions"] = dict(PLOT_CONFIG["toImageButtonOptions"], filename=name)
-    return c
+def wrap(text: str, maxc: int) -> str:
+    """maxc를 넘으면 가운데에 가까운 구분자(—, 쉼표, ·, 콜론, 공백)에서 두 줄로 나눈다."""
+    if len(text) <= maxc:
+        return text
+    mid = len(text) / 2
+    best = None
+    for sep in (" | ", " — ", ", ", " · ", ": ", " "):
+        i = text.find(sep)
+        while i != -1:
+            # " | "·공백은 구분자 앞에서 자르고 구분자를 버린다. 나머지는 구분자를 앞줄 끝에 남긴다.
+            cut = i if sep in (" | ", " ") else i + len(sep.rstrip())
+            if best is None or abs(cut - mid) < abs(best[0] - mid) - 3:
+                best = (cut, sep)
+            i = text.find(sep, i + 1)
+        if best and abs(best[0] - mid) < len(text) * 0.25:
+            break
+    if best is None:
+        return text
+    cut, sep = best
+    return text[:cut].rstrip() + "<br>" + text[cut:].lstrip(" ,|").lstrip()
+
+
+def show(fig: go.Figure, name: str, size: str = "half"):
+    """제목·부제를 폭 등급에 맞춰 줄바꿈하고, PNG 저장 규격을 고정해 그린다."""
+    import streamlit as st
+    maxc, width = SIZES[size]
+    meta = fig.layout.meta or {}
+    t = wrap(meta.get("title", ""), maxc)
+    sub = wrap(meta.get("subtitle", ""), int(maxc * 1.45))
+    lines = t.count("<br>") + sub.count("<br>") + 2
+    fig.update_layout(
+        title=dict(text=f"<b>{t}</b><br><span style='font-size:10.5px;color:{SLATE}'>{sub}</span>"),
+        margin=dict(t=28 + 17 * lines), height=fig.layout.height + 17 * (lines - 2))
+    cfg = dict(PLOT_CONFIG, toImageButtonOptions={"format": "png", "filename": name, "scale": 2,
+                                                  "width": width, "height": fig.layout.height})
+    st.plotly_chart(fig, use_container_width=True, config=cfg)
 
 
 def base(fig: go.Figure, title: str, subtitle: str, height: int = 320, legend: bool = True) -> go.Figure:
     fig.update_layout(
+        meta={"title": title, "subtitle": subtitle},
         title=dict(text=f"<b>{title}</b><br><span style='font-size:10.5px;color:{SLATE}'>{subtitle}</span>",
-                   x=0.01, xanchor="left", y=0.97, yanchor="top", font=dict(size=13, color=NAVY)),
+                   x=0.01, xanchor="left", y=1, yref="container", yanchor="top", pad=dict(t=10),
+                   font=dict(size=13, color=NAVY)),
         font=dict(family=FONT, size=11, color=NAVY), paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF",
         height=height, margin=dict(l=48, r=12, t=58, b=34), showlegend=legend,
         legend=dict(orientation="h", y=-0.14, x=0, font=dict(size=10.5), bgcolor="rgba(0,0,0,0)"),
@@ -122,13 +159,19 @@ def timing_bars(summary: pd.DataFrame, best: str, title, subtitle):
     return base(fig, title, subtitle, height=260)
 
 
-def scenario_heatmap(m: pd.DataFrame, hl_row: str | None, hl_col: str | None, title, subtitle):
-    z = m.values
+def scenario_heatmap(m: pd.DataFrame, hl_row: str | None, hl_col: str | None, title, subtitle,
+                     cost_cols: tuple = ("최대후회",)):
+    """NPV는 양수=파랑·음수=빨강. cost_cols(후회처럼 클수록 나쁜 값)는 부호를 뒤집어 칠한다."""
+    z = m.values.astype(float).copy()
+    for c in cost_cols:
+        if c in m.columns:
+            z[:, list(m.columns).index(c)] *= -1
     lim = np.nanmax(np.abs(z))
-    fig = go.Figure(go.Heatmap(z=z, x=m.columns, y=m.index, zmid=0, zmin=-lim, zmax=lim,
+    fig = go.Figure(go.Heatmap(z=z, x=m.columns, y=m.index, zmid=0, zmin=-lim, zmax=lim, customdata=m.values,
                                colorscale=[[0, "#B91C1C"], [0.5, "#FFFFFF"], [1, BLUE]], showscale=False,
-                               text=np.vectorize(lambda v: f"{v:,.0f}".replace("-", "−"))(z), texttemplate="%{text}",
-                               textfont=dict(size=10.5), hovertemplate="%{y} · %{x}: %{z:,.0f}<extra></extra>"))
+                               text=np.vectorize(lambda v: f"{v:,.0f}".replace("-", "−"))(m.values.astype(float)),
+                               texttemplate="%{text}", textfont=dict(size=10.5),
+                               hovertemplate="%{y} · %{x}: %{customdata:,.0f}<extra></extra>"))
     if hl_row is not None and hl_row in m.index:
         i = list(m.index).index(hl_row)
         fig.add_shape(type="rect", x0=-0.5, x1=len(m.columns) - 0.5, y0=i - 0.5, y1=i + 0.5,
