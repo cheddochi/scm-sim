@@ -17,7 +17,7 @@ def carbon_footprint(d: dict, sc: C.Scenario) -> pd.DataFrame:
     """공장별 셀 탄소발자국(kg/kWh): 시장기반은 엑셀 고정값, 위치기반은 <자료 6> 주석 공식."""
     fac = d["factories"]
     market = d["lanes"]["product_embedded_co2e_kg_per_kwh_proxy"].groupby(level=0).first().reindex(fac.index)
-    selfgen = pd.Series(sc.self_gen, dtype=float).reindex(fac.index).fillna(0.0)
+    selfgen = pd.Series(dict(sc.self_gen), dtype=float).reindex(fac.index).fillna(0.0)
     green = (fac["renewable_share"] - selfgen).clip(lower=0)
     location = market + C.POWER_KWH_PER_KWH * fac["grid_intensity_kgco2_per_kwh"] * green
     return pd.DataFrame({"market": market, "location": location})
@@ -50,7 +50,7 @@ def lane_table(d: dict, sc: C.Scenario, t: int, factories: list[str] | None = No
     is_eu = (dem["region"] == "EU").values
     from_kr = (f_ids == C.OCHANG)
 
-    price = dem["purchase_price_usd_per_kwh_2026"].values * D.price_index(t)
+    price = dem["purchase_price_usd_per_kwh_2026"].values * D.price_index(t, sc)
     out = pd.DataFrame(index=L.index)
     out["material"] = D.material(t) / fac["yield_rate"].values
     out["conversion"] = fac["conversion_cost_usd_per_kwh_ex_material"].values * D.conversion_index(t)

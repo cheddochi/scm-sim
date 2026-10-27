@@ -24,15 +24,12 @@ def discount(t) -> np.ndarray:
     return 1 / (1 + C.WACC) ** (np.asarray(t) - C.BASE_YEAR)
 
 
-def factory_cashflow(d: dict, pl: pd.DataFrame, f: str, rules: FinanceRules = RULES) -> pd.DataFrame:
+def factory_cashflow(d: dict, pl: pd.DataFrame, f: str, rules: FinanceRules = RULES,
+                     stages=D.FULL_NOW, subsidy_mult: float = 1.0) -> pd.DataFrame:
     """공장 하나의 연도별 세후 현금흐름($M)."""
     p = pl[pl.factory == f].set_index("year").reindex(C.YEARS).fillna(0.0)
-    capex = pd.Series(D.capex_flows(d, f), dtype=float).reindex(C.YEARS).fillna(0.0)
-    dep = pd.Series(0.0, index=C.YEARS)
-    s = D.start_year(f)
-    if s is not None:
-        net = sum(D.capex_flows(d, f).values())
-        dep.loc[s: s + C.DEPRECIATION_YEARS - 1] = net / C.DEPRECIATION_YEARS
+    capex = pd.Series(D.capex_flows(d, f, stages, subsidy_mult), dtype=float).reindex(C.YEARS).fillna(0.0)
+    dep = pd.Series(D.depreciation(d, f, stages, subsidy_mult), dtype=float).reindex(C.YEARS).fillna(0.0)
     taxable = p["ebitda"] - dep
     if rules.tax_losses == "none":
         taxable = taxable.clip(lower=0)
@@ -74,14 +71,16 @@ def payback_year(cf: pd.Series) -> int | None:
 
 
 def network_npv(d: dict, run: dict, rules: FinanceRules = RULES) -> tuple[float, dict]:
-    flows = {f: factory_cashflow(d, run["pl"], f, rules) for f in run["pl"].factory.unique()}
+    sm = run["scenario"].subsidy_mult
+    flows = {f: factory_cashflow(d, run["pl"], f, rules, run["plan"].get(f, D.FULL_NOW), sm)
+             for f in run["pl"].factory.unique()}
     return sum(npv(v["cf"]) for v in flows.values()), flows
 
 
 def evaluate_candidate(d: dict, sc: C.Scenario, f: str, base_run: dict | None = None,
-                       rules: FinanceRules = RULES) -> dict:
+                       rules: FinanceRules = RULES, stages=D.FULL_NOW) -> dict:
     base_run = base_run or N.run_network(d, sc, C.EXISTING)
-    with_run = N.run_network(d, sc, C.EXISTING + [f])
+    with_run = N.run_network(d, sc, C.EXISTING + [f], {f: stages})
     npv0, _ = network_npv(d, base_run, rules)
     npv1, flows = network_npv(d, with_run, rules)
     own = flows[f]["cf"]

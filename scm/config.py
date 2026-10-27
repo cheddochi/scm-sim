@@ -1,6 +1,6 @@
 """M0 상수: 엑셀에 없는 <자료 10> 가정과 공식 시나리오 5종 정의."""
 from __future__ import annotations
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 import os
 
@@ -67,7 +67,9 @@ class Scenario:
     key: str
     name: str
     growth_mult: float = 1.0          # 수요 성장률 승수
-    demand_shock: float = 0.0         # 총수요 추가 일괄 충격 (예: -0.4)
+    demand_shock: float = 0.0         # 총수요 추가 일괄 충격 (예: -0.4), 2027년부터
+    shock_mode: str = "step"          # step: 2027년 급락 / gradual: 2027→2030 선형 확대
+    share_cap: float = 0.70           # 고객별 이원화 수주 상한
     eua_mult: float = 1.0             # EU 탄소가격 배율
     cbam_share: float = 0.25          # 한국→EU 내재배출 과금 비중
     cbam_share_2030: float = 0.25     # 2030년 이후 과금 비중
@@ -79,7 +81,9 @@ class Scenario:
     cap_2035: float | None = None     # (2035~)
     iaa_penalty: float = 0.0          # 한국산 유럽 공급 페널티 $/kWh
     iaa_from: int = 2030
-    self_gen: dict = field(default_factory=dict)  # 공장별 저탄소 자가발전 비율 (위치기반 인정분)
+    self_gen: tuple = ()              # ((공장, 저탄소 자가발전 비율), ...) 위치기반 인정분
+    price_mult: float = 1.0           # 판매가격 수준 배율 (민감도용)
+    subsidy_mult: float = 1.0         # 투자 보조금 배율 (민감도용)
 
     def with_(self, **kw):
         return replace(self, **kw)
@@ -92,3 +96,5 @@ SCENARIOS = {
     "slow_demand": Scenario("slow_demand", "4. 수요 둔화", growth_mult=0.5),
     "iaa": Scenario("iaa", "5. 역내생산 요건", iaa_penalty=6.0),
 }
+# 질문 5(a) 시나리오 발생 확률 기본값 (근거 없는 임시값, 화면에서 수정)
+DEFAULT_PROB = {"base": 0.25, "high_carbon": 0.25, "carbon_cap": 0.20, "slow_demand": 0.15, "iaa": 0.15}
